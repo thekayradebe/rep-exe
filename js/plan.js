@@ -29,7 +29,7 @@ export const EXERCISES = {
     name: 'One-arm row',
     perSide: true,
     weight: 'single',
-    video: { url: 'https://www.youtube.com/watch?v=dFzUjzfih7k', creator: 'Max Euceda', kind: '2-minute YouTube tutorial' },
+    video: { url: 'https://www.youtube.com/watch?v=0G4AD998kRM', creator: 'Lift With Michelle — Exercise Form Tutorials', kind: 'YouTube tutorial' },
     cue: 'Brace on a sturdy chair or surface. Keep your torso still and lower with control.',
   },
   'floor-press': {
@@ -51,7 +51,7 @@ export const EXERCISES = {
     name: 'Glute bridge',
     perSide: false,
     weight: 'single',
-    video: { url: 'https://www.youtube.com/watch?v=CyHS1Y7VcE0', creator: 'Dr. Jacob Goodin', kind: 'YouTube demo' },
+    video: { url: 'https://www.youtube.com/watch?v=KiUmVd2Q4Ds', creator: 'Lift With Michelle — Exercise Form Tutorials', kind: 'YouTube tutorial (she uses a mini band — optional; the form is the same without it)' },
     cue: 'Feet planted. Lift your hips with control and squeeze at the top.',
   },
   'side-leg-raise': {
