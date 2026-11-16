@@ -14,7 +14,7 @@ export const EXERCISES = {
     name: 'Goblet squat',
     perSide: false,
     weight: 'single',
-    video: { url: 'https://www.youtube.com/watch?v=nfX7IFK9UNI', creator: 'National Academy of Sports Medicine (NASM)', kind: 'YouTube demo' },
+    video: { url: 'https://www.youtube.com/watch?v=Xef_H9ZLkdY', creator: 'Lift With Michelle — Exercise Form Tutorials', kind: 'YouTube tutorial' },
     cue: 'Hold the weight close to your chest. Keep your knees tracking over your feet.',
   },
   'rdl': {
