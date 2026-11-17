@@ -18,26 +18,22 @@
 </head>
 <body>
   <div class="app">
-    <header class="chrome">
-      <span>✧ PERSONAL STRENGTH SYSTEM</span>
-      <span id="save-status" class="save-status" role="status">LOADING…</span>
-    </header>
     <div class="inner">
-      <div class="brand">
+      <header class="brand">
         <span class="logo">REP<span>.exe</span></span>
-        <span class="sticker" aria-hidden="true">♥</span>
-      </div>
+        <span id="save-status" class="save-status" role="status"></span>
+      </header>
       <main id="content">
         <noscript><p>REP.exe needs JavaScript turned on.</p></noscript>
       </main>
-      <p id="feedback" class="feedback" aria-live="polite"></p>
     </div>
+    <p id="toast" class="toast" role="status" aria-live="polite" hidden></p>
     <nav class="bottom" aria-label="Main navigation">
       <button type="button" data-view="workout" aria-pressed="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6v12M3.5 9v6M17.5 6v12M20.5 9v6M6.5 12h11"/></svg> WORKOUT
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6v12M3.5 9v6M17.5 6v12M20.5 9v6M6.5 12h11"/></svg> Workout
       </button>
       <button type="button" data-view="progress" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg> PROGRESS
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg> Progress
       </button>
     </nav>
   </div>

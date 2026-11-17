@@ -1,5 +1,5 @@
 // REP.exe offline cache. Network first (so updates arrive), cache as fallback (so the gym-floor works offline).
-const CACHE = 'repexe-v1';
+const CACHE = 'repexe-v2';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'js/app.js', 'js/model.js', 'js/plan.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
