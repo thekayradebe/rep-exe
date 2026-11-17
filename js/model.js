@@ -1,7 +1,7 @@
 // REP.exe — data model. Pure functions only (no DOM, no storage) so they can be tested in Node.
-import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js';
+import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js?v=3';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const APP_ID = 'REP.exe';
 const DAY_MS = 86400000;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -22,18 +22,20 @@ export function addDays(iso, n) { return toISO(toEpoch(iso) + n * DAY_MS); }
 /** Monday = 0 … Sunday = 6 */
 export function weekdayIndex(iso) { return (new Date(toEpoch(iso)).getUTCDay() + 6) % 7; }
 export function mondayOf(iso) { return addDays(iso, -weekdayIndex(iso)); }
-export function isStrengthDay(iso) { return weekdayIndex(iso) < 5; }
+/** Monday–Saturday are workout days; Sunday is recovery. */
+export function isWorkoutDay(iso) { return weekdayIndex(iso) < PLAN.length; }
 export function isValidISO(iso) {
   return typeof iso === 'string' && ISO_RE.test(iso) && toISO(toEpoch(iso)) === iso;
 }
 export function formatDate(iso, opts = { day: 'numeric', month: 'short' }) {
   return new Date(toEpoch(iso)).toLocaleDateString('en-GB', { ...opts, timeZone: 'UTC' });
 }
-export function weekLabel(monday) {
-  const fri = addDays(monday, 4);
-  const sameMonth = monday.slice(0, 7) === fri.slice(0, 7);
+/** "16 – 21 Nov" style label for a Monday–Saturday week. */
+export function weekLabel(monday, withYear = true) {
+  const last = addDays(monday, PLAN.length - 1);
+  const sameMonth = monday.slice(0, 7) === last.slice(0, 7);
   const left = sameMonth ? formatDate(monday, { day: 'numeric' }) : formatDate(monday);
-  return `${left} – ${formatDate(fri)} ${fri.slice(0, 4)}`;
+  return `${left} – ${formatDate(last)}${withYear ? ` ${last.slice(0, 4)}` : ''}`;
 }
 
 /* ---------- Sessions ---------- */
@@ -43,19 +45,22 @@ export function emptyData() { return { schemaVersion: SCHEMA_VERSION, sessions: 
 /** A fresh session snapshot for a weekday, copying today's plan so history keeps its own prescription. */
 export function newSession(iso) {
   const day = PLAN[weekdayIndex(iso)];
-  if (!day) throw new Error(`No strength session on ${iso}`);
+  if (!day) throw new Error(`No workout on ${iso}`);
   return {
     date: iso,
     planVersion: PLAN_VERSION,
     exercises: day.slots.map((s) => {
       const ex = EXERCISES[s.exercise];
       const capacity = s.sets + (s.optionalExtraSet ? 1 : 0);
+      const measure = ex.measure === 'seconds' ? 'seconds' : 'reps';
       return {
         slot: s.slot,
         exerciseId: s.exercise,
         name: ex.name,
+        measure,
         targetSets: s.sets,
-        targetReps: s.reps,
+        targetReps: measure === 'reps' ? s.target : null,
+        targetSeconds: measure === 'seconds' ? s.target : null,
         perSide: ex.perSide,
         weightUnit: 'kg',
         weightConvention: ex.weight,
@@ -68,7 +73,7 @@ export function newSession(iso) {
     }),
   };
 }
-function blankSet(n) { return { set: n, reps: null, left: null, right: null, kg: null, done: false }; }
+function blankSet(n) { return { set: n, reps: null, left: null, right: null, leftSec: null, rightSec: null, kg: null, done: false }; }
 
 /** Read-only view of a date: the saved session, or a blank one from the current plan. */
 export function getSession(data, iso) { return data.sessions[iso] || newSession(iso); }
@@ -118,12 +123,13 @@ export function parseKg(raw) {
 }
 export function setIsLoggable(ex, set) {
   const ok = (v) => Number.isInteger(v) && v >= 1;
+  if (ex.measure === 'seconds') return ok(set.leftSec) && ok(set.rightSec);
   return ex.perSide ? ok(set.left) && ok(set.right) : ok(set.reps);
 }
 
 /* ---------- Mutations (return { ok, message?, unticked? }) ---------- */
 
-/** field: 'reps' | 'left' | 'right' | 'kg'. Changing reps on a ticked set unticks it so totals stay honest. */
+/** field: 'reps' | 'left' | 'right' | 'leftSec' | 'rightSec' | 'kg'. Changing reps on a ticked set unticks it so totals stay honest. */
 export function updateField(data, iso, exIdx, setIdx, field, raw) {
   const ex = ensureSession(data, iso).exercises[exIdx];
   const set = ex.sets[setIdx];
@@ -141,7 +147,7 @@ export function updateField(data, iso, exIdx, setIdx, field, raw) {
     set.done = false;
     return { ok: true, unticked: true, message: 'Reps changed — tick the set again to confirm.' };
   }
-  if (Number.isNaN(v)) return { ok: true, message: 'Reps must be a whole number of 1 or more.' };
+  if (Number.isNaN(v)) return { ok: true, message: 'Use a whole number of 1 or more.' };
   return { ok: true };
 }
 
@@ -153,7 +159,8 @@ export function setDone(data, iso, exIdx, setIdx, done, today) {
   if (ex.skipped) return { ok: false, message: 'This exercise is skipped. Include it first.' };
   const set = ex.sets[setIdx];
   if (done && !setIsLoggable(ex, set)) {
-    return { ok: false, message: ex.perSide ? 'Enter reps for both sides first.' : 'Enter your actual reps first.' };
+    const msg = ex.measure === 'seconds' ? 'Enter seconds for both sides first.' : ex.perSide ? 'Enter reps for both sides first.' : 'Enter your reps first.';
+    return { ok: false, message: msg };
   }
   set.done = !!done;
   return { ok: true };
@@ -194,11 +201,11 @@ export function rangeBounds(range, today) {
   return { start: addDays(today, -89), end: today };
 }
 
-/** Columns = calendar weeks (Monday-based), rows = Mon–Fri. */
+/** Columns = calendar weeks (Monday-based), rows = Monday–Saturday. */
 export function gridColumns(start, end) {
   const cols = [];
   for (let m = mondayOf(start); m <= end; m = addDays(m, 7)) {
-    const dates = Array.from({ length: 5 }, (_, d) => addDays(m, d));
+    const dates = Array.from({ length: PLAN.length }, (_, d) => addDays(m, d));
     if (dates.some((d) => d >= start && d <= end)) cols.push({ monday: m, dates });
   }
   return cols;
@@ -215,7 +222,7 @@ export function rangeSummary(data, range, today) {
   const { start, end } = rangeBounds(range, today);
   let scheduled = 0, finished = 0, sets = 0;
   for (let d = start; d <= end && d <= today; d = addDays(d, 1)) {
-    if (!isStrengthDay(d)) continue;
+    if (!isWorkoutDay(d)) continue;
     scheduled++;
     const st = sessionStats(getSession(data, d));
     sets += st.done;
@@ -238,8 +245,8 @@ export function parseImport(text) {
   if (!Number.isInteger(obj.schemaVersion) || obj.schemaVersion > SCHEMA_VERSION) {
     return { ok: false, error: 'This backup is from a newer version of REP.exe.' };
   }
-  const sessions = obj.sessions;
-  if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) return { ok: false, error: 'The backup has no workout data.' };
+  if (!obj.sessions || typeof obj.sessions !== 'object' || Array.isArray(obj.sessions)) return { ok: false, error: 'The backup has no workout data.' };
+  const { sessions } = migrate(structuredClone(obj));
   const dates = Object.keys(sessions).sort();
   for (const iso of dates) {
     const err = validateSession(iso, sessions[iso]);
@@ -249,17 +256,18 @@ export function parseImport(text) {
 }
 
 function validateSession(iso, s) {
-  if (!isValidISO(iso) || !isStrengthDay(iso)) return 'not a Monday–Friday date.';
+  if (!isValidISO(iso) || !isWorkoutDay(iso)) return 'not a Monday–Saturday date.';
   if (!s || s.date !== iso || !Array.isArray(s.exercises)) return 'session is malformed.';
   const posIntOrNull = (v) => v === null || (Number.isInteger(v) && v >= 1);
   for (const ex of s.exercises) {
     if (typeof ex.exerciseId !== 'string' || !Number.isInteger(ex.targetSets) || ex.targetSets < 1) return 'exercise is malformed.';
-    if (typeof ex.targetReps !== 'string' || typeof ex.perSide !== 'boolean') return 'exercise is malformed.';
+    if (ex.measure !== 'reps' && ex.measure !== 'seconds') return 'exercise is malformed.';
+    if (typeof (ex.measure === 'seconds' ? ex.targetSeconds : ex.targetReps) !== 'string' || typeof ex.perSide !== 'boolean') return 'exercise is malformed.';
     if (typeof ex.skipped !== 'boolean' || typeof ex.extraSetAdded !== 'boolean') return 'optional settings are malformed.';
     if (!Array.isArray(ex.sets) || ex.sets.length < activeSetCount(ex)) return 'sets are missing.';
     for (const set of ex.sets) {
       if (typeof set.done !== 'boolean') return 'set is malformed.';
-      if (!posIntOrNull(set.reps) || !posIntOrNull(set.left) || !posIntOrNull(set.right)) return 'reps must be whole numbers of 1 or more.';
+      if (![set.reps, set.left, set.right, set.leftSec, set.rightSec].every(posIntOrNull)) return 'reps and seconds must be whole numbers of 1 or more.';
       if (!(set.kg === null || (typeof set.kg === 'number' && set.kg >= 0))) return 'weight must be 0 or more.';
       if (set.done && !setIsLoggable(ex, set)) return 'a ticked set has no reps.';
     }
@@ -273,12 +281,27 @@ export function applyImport(data, sessions, mode) {
   return data;
 }
 
+/** Upgrades older saved data in place. v1 → v2 adds the reps/seconds measure and seconds fields. */
+export function migrate(obj) {
+  if (obj.schemaVersion === 1) {
+    for (const s of Object.values(obj.sessions || {})) {
+      for (const ex of s.exercises || []) {
+        ex.measure ??= 'reps';
+        ex.targetSeconds ??= null;
+        for (const set of ex.sets || []) { set.leftSec ??= null; set.rightSec ??= null; }
+      }
+    }
+    obj.schemaVersion = 2;
+  }
+  return obj;
+}
+
 /** Loads saved JSON safely. Returns { data, error }. */
 export function loadData(raw) {
   if (!raw) return { data: emptyData(), error: null };
   try {
     const obj = JSON.parse(raw);
-    if (obj && obj.schemaVersion === SCHEMA_VERSION && obj.sessions && typeof obj.sessions === 'object') return { data: obj, error: null };
+    if (obj && Number.isInteger(obj.schemaVersion) && obj.schemaVersion <= SCHEMA_VERSION && obj.sessions && typeof obj.sessions === 'object') return { data: migrate(obj), error: null };
     return { data: emptyData(), error: 'Saved data was unreadable.' };
   } catch {
     return { data: emptyData(), error: 'Saved data was unreadable.' };

@@ -1,6 +1,6 @@
 // REP.exe — UI. All records live in localStorage on this device; see model.js for the rules.
-import * as M from './model.js';
-import { PLAN, EXERCISES } from './plan.js';
+import * as M from './model.js?v=3';
+import { PLAN, EXERCISES } from './plan.js?v=3';
 
 const STORAGE_KEY = 'repexe:data:v1';
 const $content = document.getElementById('content');
@@ -69,7 +69,7 @@ let today = M.todayISO();
 
 function goToday() {
   today = M.todayISO();
-  if (M.isStrengthDay(today)) { s.date = today; s.rest = false; }
+  if (M.isWorkoutDay(today)) { s.date = today; s.rest = false; }
   else { s.date = M.mondayOf(today); s.rest = true; }
   s.form = null;
 }
@@ -79,15 +79,14 @@ function goToday() {
 const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const dayName = (iso) => PLAN[M.weekdayIndex(iso)]?.day ?? '';
 const exInfo = (ex) => EXERCISES[ex.exerciseId] || {};
-const rx = (ex) => `${ex.optionalExtraSet ? `${ex.targetSets}–${ex.targetSets + 1}` : ex.targetSets} × ${ex.targetReps}${ex.perSide ? ' each side' : ''}`;
+const rx = (ex) => {
+  const sets = ex.optionalExtraSet ? `${ex.targetSets}–${ex.targetSets + 1}` : ex.targetSets;
+  const target = ex.measure === 'seconds' ? `${ex.targetSeconds} sec` : ex.targetReps;
+  return `${sets} × ${target}${ex.perSide ? ' each side' : ''}`;
+};
 const weightAria = { each: 'kilograms per dumbbell', single: 'kilograms, one dumbbell' };
 const doneCount = (ex) => ex.sets.slice(0, M.activeSetCount(ex)).filter((x) => x.done).length;
-const shortWeek = (monday) => {
-  const fri = M.addDays(monday, 4);
-  return monday.slice(0, 7) === fri.slice(0, 7)
-    ? `${M.formatDate(monday, { day: 'numeric' })} – ${M.formatDate(fri)}`
-    : `${M.formatDate(monday)} – ${M.formatDate(fri)}`;
-};
+const shortWeek = (monday) => M.weekLabel(monday, false);
 
 function defaultOpen(session) {
   return session.exercises.findIndex((ex) => !ex.skipped && doneCount(ex) < M.activeSetCount(ex));
@@ -133,7 +132,7 @@ function renderWorkout() {
   let html = renderWeekbar(monday) + renderTabs(monday);
   if (s.rest) {
     const next = M.addDays(M.mondayOf(today), 7);
-    return html + `<section class="card rest"><h1>Rest day ♡</h1>
+    return html + `<section class="card rest"><h1>Sunday rest ♡</h1>
       <button type="button" class="big-button" data-goto="${next}">Preview Monday</button></section>`;
   }
   const session = M.getSession(data, s.date);
@@ -141,8 +140,9 @@ function renderWorkout() {
   const future = s.date > today;
   if (!(s.date in s.open)) s.open[s.date] = defaultOpen(session);
 
+  const label = PLAN[M.weekdayIndex(s.date)].label;
   html += `<div class="day-head">
-    <h1>${dayName(s.date)}</h1>
+    <h1>${dayName(s.date)}${label ? `<small>${label}</small>` : ''}</h1>
     <span class="day-count${st.finished ? ' done' : ''}">${st.finished ? 'Done ♡' : `${st.done}/${st.total}`}</span>
   </div>
   <div class="bar" role="progressbar" aria-label="Sets completed" aria-valuemin="0" aria-valuemax="${st.total}" aria-valuenow="${st.done}"><span style="width:${st.total ? (st.done / st.total) * 100 : 0}%"></span></div>`;
@@ -160,7 +160,7 @@ function renderExercise(ex, i, future) {
   if (open) {
     const sets = ex.skipped ? '' : ex.sets.slice(0, n).map((set, j) => renderSet(ex, i, set, j, future, bw)).join('');
     const extras = [
-      `<button type="button" class="pill form-pill" data-form="${i}">▶ Form</button>`,
+      `<button type="button" class="pill form-pill" data-form="${i}">▶ Form & muscles</button>`,
       ex.optionalExtraSet ? `<button type="button" class="pill" data-extra="${i}" ${future ? 'disabled' : ''}>${ex.extraSetAdded ? '− 2nd set' : '+ 2nd set'}</button>` : '',
       ex.skippable ? `<button type="button" class="pill" data-skip="${i}" ${future ? 'disabled' : ''}>${ex.skipped ? 'Include' : 'Skip'}</button>` : '',
     ].join('');
@@ -180,11 +180,13 @@ function renderSet(ex, i, set, j, future, bw) {
   const name = esc(ex.name);
   const num = (field, value, label, ph, mode = 'numeric') =>
     `<input type="text" inputmode="${mode}" ${mode === 'numeric' ? 'pattern="[0-9]*"' : ''} autocomplete="off" id="${id(field)}" data-ex="${i}" data-set="${j}" data-field="${field}" aria-label="${esc(label)}" value="${value ?? ''}" placeholder="${ph}" ${dis}>`;
-  const reps = ex.perSide
-    ? num('left', set.left, `${name} set ${j + 1} left reps`, 'L') + num('right', set.right, `${name} set ${j + 1} right reps`, 'R')
-    : num('reps', set.reps, `${name} set ${j + 1} reps`, 'reps');
+  const reps = ex.measure === 'seconds'
+    ? num('leftSec', set.leftSec, `${name} set ${j + 1} left side seconds`, 'L sec') + num('rightSec', set.rightSec, `${name} set ${j + 1} right side seconds`, 'R sec')
+    : ex.perSide
+      ? num('left', set.left, `${name} set ${j + 1} left reps`, 'L') + num('right', set.right, `${name} set ${j + 1} right reps`, 'R')
+      : num('reps', set.reps, `${name} set ${j + 1} reps`, 'reps');
   const kg = bw ? '' : num('kg', set.kg, `${name} set ${j + 1} ${weightAria[ex.weightConvention] || 'kilograms'}, optional`, 'kg', 'decimal');
-  return `<div class="set${set.done ? ' is-done' : ''}${ex.perSide ? ' sided' : ''}${bw ? ' bw' : ''}">
+  return `<div class="set${set.done ? ' is-done' : ''}${ex.perSide || ex.measure === 'seconds' ? ' sided' : ''}${bw ? ' bw' : ''}">
     <span class="set-n" aria-hidden="true">${j + 1}</span>${reps}${kg}
     <input type="checkbox" class="tick" id="${id('done')}" data-ex="${i}" data-check="${j}" ${set.done ? 'checked' : ''} ${dis}
       aria-label="${name} set ${j + 1} done${ex.perSide ? ', both sides' : ''}">
@@ -194,14 +196,17 @@ function renderSet(ex, i, set, j, future, bw) {
 function renderForm() {
   const ex = M.getSession(data, s.date).exercises[s.form];
   const info = exInfo(ex);
+  const m = info.muscles;
+  const img = info.image ? `images/anatomy/${info.image}.webp` : '';
   return `<button type="button" class="back" data-back id="back-top">‹ Back</button>
   <section class="card form">
     <h1>${esc(ex.name)}</h1>
     <p class="rx">${rx(ex)}</p>
-    <a class="player" href="${esc(info.video?.url)}" target="_blank" rel="noopener noreferrer">
-      <span class="play" aria-hidden="true">▶</span><span>Watch on YouTube</span>
-    </a>
-    <p class="credit">${esc((info.video?.creator || '').split(' — ')[0])}</p>
+    ${img ? `<a class="anatomy" href="${img}" target="_blank" rel="noopener">
+      <img src="${img}" width="1000" height="1000" alt="${esc(ex.name)} muscle map. Main: ${esc(m?.main)}. Supporting: ${esc(m?.support)}.">
+    </a>` : ''}
+    <a class="big-button watch" href="${esc(info.video?.url)}" target="_blank" rel="noopener noreferrer">▶ Watch form</a>
+    <p class="credit">${esc(info.video?.creator || '')} · YouTube</p>
     ${info.cue ? `<p class="cue">${esc(info.cue)}</p>` : ''}
   </section>`;
 }
@@ -240,7 +245,7 @@ function renderGrid(start, end) {
   const cols = M.gridColumns(start, end);
   if (s.range === 'week') {
     const dates = cols[0].dates;
-    return `<div class="heat week" role="group" aria-label="This week">
+    return `<div class="heat week" style="grid-template-columns:repeat(${dates.length},minmax(0,1fr))" role="group" aria-label="This week">
       ${dates.map((d) => cellHTML(d, start, end)).join('')}
       ${dates.map((d) => `<span class="lbl" aria-hidden="true">${dayName(d).slice(0, 3)}</span>`).join('')}
     </div>`;
@@ -250,11 +255,12 @@ function renderGrid(start, end) {
     if (s.range === 'month') label = M.formatDate(c.monday < start ? start : c.monday, { day: 'numeric' });
     else {
       const prev = cols[i - 1];
-      if (!prev || prev.dates[4].slice(0, 7) !== c.dates[4].slice(0, 7)) label = M.formatDate(i === 0 ? (c.dates.find((d) => d >= start) || c.monday) : c.dates[4], { month: 'short' });
+      const mid = c.dates[3];
+      if (!prev || prev.dates[3].slice(0, 7) !== mid.slice(0, 7)) label = M.formatDate(i === 0 ? (c.dates.find((d) => d >= start) || c.monday) : mid, { month: 'short' });
     }
     return `<span class="lbl" aria-hidden="true">${label}</span>`;
   }).join('');
-  const rows = [0, 1, 2, 3, 4].map((r) =>
+  const rows = PLAN.map((_, r) =>
     `<span class="lbl rowlbl" aria-hidden="true">${PLAN[r].day[0]}</span>${cols.map((c) => cellHTML(c.dates[r], start, end)).join('')}`).join('');
   return `<div class="heat" style="grid-template-columns:14px repeat(${cols.length},minmax(0,1fr))" role="group" aria-label="Workouts by week">
     <span></span>${head}${rows}</div>`;
@@ -293,7 +299,7 @@ function renderLogDetail(session) {
     else {
       lines = ex.sets.slice(0, n).map((x) => {
         if (!x.done) return '';
-        const reps = ex.perSide ? `${x.left}L / ${x.right}R` : `${x.reps}`;
+        const reps = ex.measure === 'seconds' ? `${x.leftSec}s L / ${x.rightSec}s R` : ex.perSide ? `${x.left}L / ${x.right}R` : `${x.reps}`;
         return `<li>${reps}${x.kg !== null ? ` · ${x.kg} kg` : ''}</li>`;
       }).join('') || '<li class="muted">—</li>';
     }
@@ -441,6 +447,13 @@ document.addEventListener('visibilitychange', () => {
   const wasOnToday = s.date === today || s.rest;
   today = now;
   if (wasOnToday) goToday();
+  render();
+});
+
+// Another open copy of the app saved: pick up its changes.
+window.addEventListener('storage', (e) => {
+  if (e.key !== STORAGE_KEY) return;
+  data = M.loadData(e.newValue).data;
   render();
 });
 

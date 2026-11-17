@@ -1,6 +1,7 @@
 // REP.exe offline cache. Network first (so updates arrive), cache as fallback (so the gym-floor works offline).
-const CACHE = 'repexe-v2';
-const SHELL = ['./', 'index.html', 'css/styles.css', 'js/app.js', 'js/model.js', 'js/plan.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/apple-touch-icon.png'];
+const CACHE = 'repexe-v3';
+const V = '3';
+const SHELL = ['./', 'index.html', `css/styles.css?v=${V}`, `js/app.js?v=${V}`, `js/model.js?v=${V}`, `js/plan.js?v=${V}`, 'manifest.webmanifest', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -12,7 +13,7 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' }) // always revalidate so files never mix versions
       .then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
         return res;

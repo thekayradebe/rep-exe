@@ -48,4 +48,6 @@ GitHub Pages serves branch `main` from the repo root. Push to `main` and wait ab
 gh api repos/thekayradebe/rep-exe/pages/builds/latest --jq '.status'
 ```
 
+**After changing any app file**, bump the `?v=` number everywhere it appears (index.html, js/app.js, js/model.js, tests, sw.js `V`). This stops phones mixing old and new files.
+
 The installed app checks the network first, so updates arrive on the next open with a connection. Offline, it uses the last cached copy.

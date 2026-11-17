@@ -1,31 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as M from '../js/model.js';
-import { PLAN } from '../js/plan.js';
+import * as M from '../js/model.js?v=3';
+import { PLAN } from '../js/plan.js?v=3';
 
-const MON = '2026-11-16', TUE = '2026-11-17', WED = '2026-11-18', THU = '2026-11-19', FRI = '2026-11-20';
+const MON = '2026-11-16', TUE = '2026-11-17', WED = '2026-11-18', THU = '2026-11-19', FRI = '2026-11-20', SAT = '2026-11-21', SUN = '2026-11-22';
 
 function logSet(data, iso, ex, i, reps = 10, today = '2030-01-01') {
   const e = M.getSession(data, iso).exercises[ex];
-  if (e.perSide) { M.updateField(data, iso, ex, i, 'left', reps); M.updateField(data, iso, ex, i, 'right', reps); }
+  if (e.measure === 'seconds') { M.updateField(data, iso, ex, i, 'leftSec', reps); M.updateField(data, iso, ex, i, 'rightSec', reps); }
+  else if (e.perSide) { M.updateField(data, iso, ex, i, 'left', reps); M.updateField(data, iso, ex, i, 'right', reps); }
   else M.updateField(data, iso, ex, i, 'reps', reps);
   return M.setDone(data, iso, ex, i, true, today);
 }
 
-test('plan: exact exercises, order, sets and reps', () => {
-  const rows = PLAN.map((d) => d.slots.map((s) => `${s.exercise}:${s.sets}:${s.reps}`).join(' | '));
+test('plan: exact exercises, order, sets and targets', () => {
+  const rows = PLAN.map((d) => d.slots.map((s) => `${s.exercise}:${s.sets}:${s.target}`).join(' | '));
   assert.deepEqual(rows, [
     'goblet-squat:3:8–15 | rdl:2:8–15',
     'one-arm-row:3:8–15 | floor-press:3:8–15',
     'supported-split-squat:3:8–12 | glute-bridge:2:10–20',
     'one-arm-row:2:8–15 | floor-press:2:8–15 | side-leg-raise:1:12–25',
     'goblet-squat:2:10–15 | rdl:2:8–15 | sliding-hamstring-curl:2:6–12',
+    'dead-bug:2:6–10 | reverse-crunch:2:8–12 | side-plank-knees:2:10–20',
   ]);
 });
 
 test('planned set totals per day', () => {
-  const totals = [MON, TUE, WED, THU, FRI].map((d) => M.sessionStats(M.newSession(d)).total);
-  assert.deepEqual(totals, [5, 6, 5, 5, 6]);
+  const totals = [MON, TUE, WED, THU, FRI, SAT].map((d) => M.sessionStats(M.newSession(d)).total);
+  assert.deepEqual(totals, [5, 6, 5, 5, 6, 6]);
+  assert.equal(M.isWorkoutDay(SAT), true);
+  assert.equal(M.isWorkoutDay(SUN), false);
+  assert.throws(() => M.newSession(SUN));
 });
 
 test('dates: weekdays, Mondays and boundaries', () => {
@@ -35,8 +40,9 @@ test('dates: weekdays, Mondays and boundaries', () => {
   assert.equal(M.mondayOf('2027-01-01'), '2026-12-28'); // crosses year
   assert.equal(M.addDays('2026-12-31', 1), '2027-01-01');
   assert.equal(M.addDays('2028-02-28', 1), '2028-02-29'); // leap year
-  assert.equal(M.weekLabel('2026-12-28'), '28 Dec – 1 Jan 2027');
-  assert.equal(M.weekLabel(MON), '16 – 20 Nov 2026');
+  assert.equal(M.weekLabel('2026-12-28'), '28 Dec – 2 Jan 2027');
+  assert.equal(M.weekLabel(MON), '16 – 21 Nov 2026');
+  assert.equal(M.weekLabel('2026-11-30', false), '30 Nov – 5 Dec');
 });
 
 test('todayISO uses Africa/Johannesburg, not UTC', () => {
@@ -147,8 +153,9 @@ test('summary ignores future days and weekends; finished vs sets logged', () => 
   logSet(data, TUE, 1, 0); // Tue partial
   const s = M.rangeSummary(data, 'week', WED);
   assert.deepEqual({ scheduled: s.scheduled, finished: s.finished, sets: s.sets }, { scheduled: 3, finished: 1, sets: 6 });
-  // Saturday: all five weekdays count, weekend not
-  assert.equal(M.rangeSummary(data, 'week', '2026-11-21').scheduled, 5);
+  // Sunday: Monday–Saturday count, Sunday does not
+  assert.equal(M.rangeSummary(data, 'week', SUN).scheduled, 6);
+  assert.equal(M.rangeSummary(data, 'week', SAT).scheduled, 6);
   // Unticking reduces totals
   M.setDone(data, MON, 0, 0, false, WED);
   const s2 = M.rangeSummary(data, 'week', WED);
@@ -203,7 +210,7 @@ test('import validation rejects bad files; merge keeps other dates', () => {
   bad.sessions[MON].exercises[0].sets[0].reps = 0;
   assert.equal(M.parseImport(JSON.stringify(bad)).ok, false);
   const weekend = JSON.parse(M.exportData(data));
-  weekend.sessions['2026-11-21'] = { ...weekend.sessions[MON], date: '2026-11-21' };
+  weekend.sessions[SUN] = { ...weekend.sessions[MON], date: SUN };
   assert.equal(M.parseImport(JSON.stringify(weekend)).ok, false);
 
   const other = M.emptyData();
@@ -217,4 +224,49 @@ test('fresh start has no history', () => {
   assert.equal(error, null);
   assert.deepEqual(data.sessions, {});
   assert.equal(M.loadData('{broken').error !== null, true);
+});
+
+test('side plank: seconds stored separately from reps, both sides required, one set per pair', () => {
+  const data = M.emptyData();
+  const plank = M.getSession(data, SAT).exercises[2];
+  assert.equal(plank.measure, 'seconds');
+  assert.equal(plank.targetSeconds, '10–20');
+  assert.equal(plank.targetReps, null);
+  M.updateField(data, SAT, 2, 0, 'leftSec', '15');
+  assert.equal(M.setDone(data, SAT, 2, 0, true, SAT).ok, false);
+  M.updateField(data, SAT, 2, 0, 'rightSec', '25'); // above target is allowed
+  assert.equal(M.setDone(data, SAT, 2, 0, true, SAT).ok, true);
+  const set = data.sessions[SAT].exercises[2].sets[0];
+  assert.deepEqual([set.leftSec, set.rightSec, set.left, set.right, set.reps], [15, 25, null, null, null]);
+  assert.equal(M.sessionStats(data.sessions[SAT]).done, 1);
+  // reps fields alone don't satisfy a timed hold
+  M.updateField(data, SAT, 2, 1, 'left', '15'); M.updateField(data, SAT, 2, 1, 'right', '15');
+  assert.equal(M.setDone(data, SAT, 2, 1, true, SAT).ok, false);
+});
+
+test('Saturday counts in progress; finishing all six sets finishes the day', () => {
+  const data = M.emptyData();
+  for (const [ex, i] of [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]]) logSet(data, SAT, ex, i, 12);
+  assert.equal(M.sessionStats(data.sessions[SAT]).finished, true);
+  const s = M.rangeSummary(data, 'week', SUN);
+  assert.deepEqual({ finished: s.finished, sets: s.sets }, { finished: 1, sets: 6 });
+  const cols = M.gridColumns(...Object.values(M.rangeBounds('month', SAT)));
+  assert.ok(cols.every((c) => c.dates.length === 6));
+});
+
+test('v1 saved data (Mon–Fri, no seconds fields) upgrades without loss', () => {
+  const v1 = { schemaVersion: 1, sessions: { [MON]: { date: MON, planVersion: 1, exercises: [
+    { slot: 'goblet-squat', exerciseId: 'goblet-squat', name: 'Goblet squat', targetSets: 3, targetReps: '8–15', perSide: false, weightUnit: 'kg', weightConvention: 'single', optionalExtraSet: false, extraSetAdded: false, skippable: false, skipped: false,
+      sets: [1, 2, 3].map((n) => ({ set: n, reps: n === 1 ? 12 : null, left: null, right: null, kg: n === 1 ? 8 : null, done: n === 1 })) },
+  ] } } };
+  const { data, error } = M.loadData(JSON.stringify(v1));
+  assert.equal(error, null);
+  assert.equal(data.schemaVersion, 2);
+  const ex = data.sessions[MON].exercises[0];
+  assert.equal(ex.measure, 'reps');
+  assert.deepEqual([ex.sets[0].reps, ex.sets[0].kg, ex.sets[0].done, ex.sets[0].leftSec], [12, 8, true, null]);
+  assert.equal(M.sessionStats(data.sessions[MON]).done, 1);
+  // a v1 backup file imports too
+  const parsed = M.parseImport(JSON.stringify({ app: 'REP.exe', ...v1 }));
+  assert.equal(parsed.ok, true, parsed.error);
 });
