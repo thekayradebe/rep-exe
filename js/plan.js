@@ -3,7 +3,9 @@
 // Past sessions keep the prescription they were logged with, so editing the plan never rewrites history.
 
 export const TIMEZONE = 'Africa/Johannesburg';
-export const PLAN_VERSION = 2;
+export const PLAN_VERSION = 3;
+
+// Equipment: two 5 kg and two 12.5 kg dumbbells (weights are per dumbbell). Bodyweight = leave kg blank.
 
 const MICHELLE = 'Lift With Michelle';
 
@@ -38,6 +40,19 @@ export const EXERCISES = {
     video: { url: 'https://www.youtube.com/watch?v=maCG2yJl34o', creator: 'Colossus Fitness' },
     cue: 'Lie on the floor. Lower gently until your upper arms touch — no bouncing.',
   },
+  'bulgarian-split-squat': {
+    name: 'Bulgarian split squat', perSide: true, weight: 'each',
+    image: 'bulgarian-split-squat', muscles: { main: 'quads, glutes', support: 'core, outer hips' },
+    video: { url: 'https://www.youtube.com/watch?v=hbw7hdyOpq0', creator: 'NASM' },
+    cue: 'Rear foot up on a firm, stable support. Lower straight down with control. kg = per dumbbell, one in each hand; leave blank for bodyweight.',
+  },
+  'dumbbell-hip-thrust': {
+    name: 'Dumbbell hip thrust', perSide: false, weight: 'single',
+    image: 'dumbbell-hip-thrust', muscles: { main: 'glutes', support: 'hamstrings, core' },
+    video: { url: 'https://youtu.be/T55MKVmc0G0?si=4o-hI0jLUfl4_87Q', creator: 'Lift With Michelle — Exercise Form Tutorials' },
+    cue: 'Upper back on a firm, stable bench or couch. Hold one dumbbell securely across your hips with padding. kg = that one dumbbell.',
+  },
+  // Retired from Wednesday on 18 Nov 2026. Kept so older logged sessions still show their details.
   'supported-split-squat': {
     name: 'Supported split squat', perSide: true, weight: 'single',
     image: 'supported-split-squat', muscles: { main: 'quads, glutes', support: 'core, outer hips' },
@@ -102,8 +117,9 @@ export const PLAN = [
   {
     day: 'Wednesday',
     slots: [
-      { slot: 'supported-split-squat', exercise: 'supported-split-squat', sets: 3, target: '8–12' },
-      { slot: 'glute-bridge', exercise: 'glute-bridge', sets: 2, target: '10–20' },
+      // No lunges anywhere in the plan (user preference). The Bulgarian split squat is explicitly approved.
+      { slot: 'bulgarian-split-squat', exercise: 'bulgarian-split-squat', sets: 3, target: '8–12' },
+      { slot: 'dumbbell-hip-thrust', exercise: 'dumbbell-hip-thrust', sets: 3, target: '10–20' },
     ],
   },
   {

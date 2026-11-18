@@ -1,6 +1,6 @@
 # REP.exe
 
-A personal Monday–Friday dumbbell strength log. Phone-first, pastel Y2K look.
+A personal Monday–Saturday dumbbell strength log (Saturday is Abs & Core). Phone-first, pastel Y2K look.
 
 **Live:** https://thekayradebe.github.io/rep-exe/
 

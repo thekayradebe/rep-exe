@@ -1,5 +1,5 @@
 // REP.exe — data model. Pure functions only (no DOM, no storage) so they can be tested in Node.
-import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js?v=3';
+import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js?v=4';
 
 export const SCHEMA_VERSION = 2;
 export const APP_ID = 'REP.exe';
@@ -81,6 +81,25 @@ export function getSession(data, iso) { return data.sessions[iso] || newSession(
 export function ensureSession(data, iso) {
   if (!data.sessions[iso]) data.sessions[iso] = newSession(iso);
   return data.sessions[iso];
+}
+
+function sessionHasEntries(session) {
+  return session.exercises.some((ex) => ex.skipped || ex.extraSetAdded || ex.sets.some((set) =>
+    set.done || [set.reps, set.left, set.right, set.leftSec, set.rightSec, set.kg].some((v) => v !== null && v !== undefined)));
+}
+
+/**
+ * After a plan change: today's/upcoming sessions saved from an older plan with nothing entered
+ * are dropped so the current plan shows. Anything with entries, and every past session, is kept as logged.
+ */
+export function dropStaleBlankSessions(data, today) {
+  let dropped = 0;
+  for (const [iso, session] of Object.entries(data.sessions)) {
+    if (iso < today || (session.planVersion ?? 0) >= PLAN_VERSION || sessionHasEntries(session)) continue;
+    delete data.sessions[iso];
+    dropped++;
+  }
+  return dropped;
 }
 
 export function activeSetCount(ex) { return ex.targetSets + (ex.extraSetAdded ? 1 : 0); }

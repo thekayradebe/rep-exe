@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as M from '../js/model.js?v=3';
-import { PLAN } from '../js/plan.js?v=3';
+import * as M from '../js/model.js?v=4';
+import { PLAN, EXERCISES, PLAN_VERSION } from '../js/plan.js?v=4';
 
 const MON = '2026-11-16', TUE = '2026-11-17', WED = '2026-11-18', THU = '2026-11-19', FRI = '2026-11-20', SAT = '2026-11-21', SUN = '2026-11-22';
 
@@ -18,7 +18,7 @@ test('plan: exact exercises, order, sets and targets', () => {
   assert.deepEqual(rows, [
     'goblet-squat:3:8–15 | rdl:2:8–15',
     'one-arm-row:3:8–15 | floor-press:3:8–15',
-    'supported-split-squat:3:8–12 | glute-bridge:2:10–20',
+    'bulgarian-split-squat:3:8–12 | dumbbell-hip-thrust:3:10–20',
     'one-arm-row:2:8–15 | floor-press:2:8–15 | side-leg-raise:1:12–25',
     'goblet-squat:2:10–15 | rdl:2:8–15 | sliding-hamstring-curl:2:6–12',
     'dead-bug:2:6–10 | reverse-crunch:2:8–12 | side-plank-knees:2:10–20',
@@ -27,7 +27,7 @@ test('plan: exact exercises, order, sets and targets', () => {
 
 test('planned set totals per day', () => {
   const totals = [MON, TUE, WED, THU, FRI, SAT].map((d) => M.sessionStats(M.newSession(d)).total);
-  assert.deepEqual(totals, [5, 6, 5, 5, 6, 6]);
+  assert.deepEqual(totals, [5, 6, 6, 5, 6, 6]);
   assert.equal(M.isWorkoutDay(SAT), true);
   assert.equal(M.isWorkoutDay(SUN), false);
   assert.throws(() => M.newSession(SUN));
@@ -269,4 +269,63 @@ test('v1 saved data (Mon–Fri, no seconds fields) upgrades without loss', () =>
   // a v1 backup file imports too
   const parsed = M.parseImport(JSON.stringify({ app: 'REP.exe', ...v1 }));
   assert.equal(parsed.ok, true, parsed.error);
+});
+
+/* ---------- Wednesday update, 18 Nov 2026 ---------- */
+
+test('Wednesday: Bulgarian split squat then dumbbell hip thrust, each with its own video and image', () => {
+  const [bss, hip] = M.newSession(WED).exercises;
+  assert.deepEqual([bss.name, bss.targetSets, bss.targetReps, bss.perSide], ['Bulgarian split squat', 3, '8–12', true]);
+  assert.deepEqual([hip.name, hip.targetSets, hip.targetReps, hip.perSide], ['Dumbbell hip thrust', 3, '10–20', false]);
+  assert.equal(EXERCISES[hip.exerciseId].video.url, 'https://youtu.be/T55MKVmc0G0?si=4o-hI0jLUfl4_87Q');
+  assert.equal(EXERCISES[bss.exerciseId].video.url, 'https://www.youtube.com/watch?v=hbw7hdyOpq0');
+  assert.deepEqual([EXERCISES[bss.exerciseId].image, EXERCISES[hip.exerciseId].image], ['bulgarian-split-squat', 'dumbbell-hip-thrust']);
+});
+
+test('no lunges anywhere; Friday unchanged', () => {
+  const names = PLAN.flatMap((d) => d.slots.map((s) => EXERCISES[s.exercise].name.toLowerCase()));
+  assert.ok(names.every((n) => !n.includes('lunge')), names.join(', '));
+  assert.deepEqual(PLAN[4].slots.map((s) => s.exercise), ['goblet-squat', 'rdl', 'sliding-hamstring-curl']);
+});
+
+test('Wednesday: one paired Bulgarian set = one set; finishing reaches 6/6', () => {
+  const data = M.emptyData();
+  M.updateField(data, WED, 0, 0, 'left', '10');
+  assert.equal(M.setDone(data, WED, 0, 0, true, WED).ok, false); // right side still empty
+  M.updateField(data, WED, 0, 0, 'right', '9');
+  assert.equal(M.setDone(data, WED, 0, 0, true, WED).ok, true);
+  assert.deepEqual(M.sessionStats(data.sessions[WED]), { done: 1, total: 6, skipped: 0, finished: false });
+  for (const [ex, i] of [[0, 1], [0, 2], [1, 0], [1, 1], [1, 2]]) logSet(data, WED, ex, i, 12, WED);
+  assert.deepEqual(M.sessionStats(data.sessions[WED]), { done: 6, total: 6, skipped: 0, finished: true });
+});
+
+function oldWednesday(iso, { logged }) {
+  const set = (n, on) => ({ set: n, reps: on ? 12 : null, left: on ? 10 : null, right: on ? 10 : null, leftSec: null, rightSec: null, kg: null, done: on });
+  const ex = (exerciseId, name, sets, targetReps, perSide) => ({ slot: exerciseId, exerciseId, name, measure: 'reps', targetSets: sets, targetReps, targetSeconds: null,
+    perSide, weightUnit: 'kg', weightConvention: 'single', optionalExtraSet: false, extraSetAdded: false, skippable: false, skipped: false,
+    sets: Array.from({ length: sets }, (_, i) => set(i + 1, logged)) });
+  return { date: iso, planVersion: 2, exercises: [ex('supported-split-squat', 'Supported split squat', 3, '8–12', true), ex('glute-bridge', 'Glute bridge', 2, '10–20', false)] };
+}
+
+test('past five-set Wednesdays keep their original prescription', () => {
+  const PAST = '2026-11-11';
+  const data = { schemaVersion: 2, sessions: { [PAST]: oldWednesday(PAST, { logged: true }) } };
+  assert.equal(M.dropStaleBlankSessions(data, WED), 0);
+  const st = M.sessionStats(M.getSession(data, PAST));
+  assert.deepEqual([st.done, st.total, st.finished], [5, 5, true]);
+  assert.deepEqual(M.getSession(data, PAST).exercises.map((e) => e.name), ['Supported split squat', 'Glute bridge']);
+  assert.ok(EXERCISES['supported-split-squat'] && EXERCISES['glute-bridge'], 'old exercise details still resolve');
+  assert.equal(M.parseImport(M.exportData(data)).ok, true);
+});
+
+test('today: blank old-plan session is refreshed; one with entries is kept as logged', () => {
+  const blank = { schemaVersion: 2, sessions: { [WED]: oldWednesday(WED, { logged: false }) } };
+  assert.equal(M.dropStaleBlankSessions(blank, WED), 1);
+  assert.equal(M.getSession(blank, WED).planVersion, PLAN_VERSION);
+  assert.equal(M.sessionStats(M.getSession(blank, WED)).total, 6);
+
+  const started = { schemaVersion: 2, sessions: { [WED]: oldWednesday(WED, { logged: false }) } };
+  started.sessions[WED].exercises[0].sets[0].left = 8; // typed a value, not ticked yet
+  assert.equal(M.dropStaleBlankSessions(started, WED), 0);
+  assert.equal(started.sessions[WED].exercises[0].sets[0].left, 8);
 });

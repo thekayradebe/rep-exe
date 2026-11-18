@@ -1,6 +1,6 @@
 // REP.exe — UI. All records live in localStorage on this device; see model.js for the rules.
-import * as M from './model.js?v=3';
-import { PLAN, EXERCISES } from './plan.js?v=3';
+import * as M from './model.js?v=4';
+import { PLAN, EXERCISES } from './plan.js?v=4';
 
 const STORAGE_KEY = 'repexe:data:v1';
 const $content = document.getElementById('content');
@@ -20,6 +20,9 @@ function load() {
     toast('Saved log was unreadable. A copy was kept.', true);
   }
   data = res.data;
+  if (M.dropStaleBlankSessions(data, M.todayISO()) && raw) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* status below reports storage */ }
+  }
   // Prove storage works before ever claiming "saved".
   try { localStorage.setItem('repexe:probe', '1'); localStorage.removeItem('repexe:probe'); } catch { ok = false; }
   setStatus(ok);
