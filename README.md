@@ -6,9 +6,10 @@ A personal Monday–Saturday dumbbell strength log (Saturday is Abs & Core). Pho
 
 ## Where the workout data lives
 
-Workout logs are saved in the browser on the device you use (localStorage). Nothing is sent to GitHub or any server. This repo only holds the app code.
+Workout logs are saved in the browser on the device you use (localStorage). Nothing is sent anywhere unless you turn on sync. This repo only holds the app code.
 
-- Each phone or browser keeps its own separate log. There is no sync.
+- Each phone or browser keeps its own copy of the log. On iPhone, Safari and the Home Screen app are separate, and deleting the Home Screen app deletes its copy.
+- **Sync (optional):** Progress → *Sync with GitHub*. Paste a classic GitHub token with only the `gist` scope. The app keeps the log in one secret gist (`rep-exe-log.json`) and merges it with each device on open, after edits, and when back online. The newest edit of each day wins. The token stays on that device; *Turn off* removes it. A secret gist is unlisted, not locked: anyone with its URL can read it.
 - Use **Progress → Backup → Export** now and then. **Import** restores a backup file (merge or replace).
 - On iPhone, add the app to your Home Screen (Safari → Share → Add to Home Screen). Safari can clear website data for sites you haven't opened in a while; the Home Screen app is protected from that.
 
@@ -18,7 +19,8 @@ Workout logs are saved in the browser on the device you use (localStorage). Noth
 | --- | --- |
 | `js/plan.js` | The training plan, form-video links and cues. **Edit this to change exercises or videos.** |
 | `js/model.js` | Data rules: dates, set counting, progress squares, backup validation. No UI code. |
-| `js/app.js` | Screens and storage. |
+| `js/app.js` | Screens, storage and when to sync. |
+| `js/sync.js` | GitHub Gist calls for sync. |
 | `css/styles.css` | The look. |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Home Screen install and offline use. |
 | `tests/model.test.js` | Logic tests. |

@@ -1,5 +1,5 @@
 // REP.exe — data model. Pure functions only (no DOM, no storage) so they can be tested in Node.
-import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js?v=4';
+import { PLAN, PLAN_VERSION, EXERCISES, TIMEZONE } from './plan.js?v=6';
 
 export const SCHEMA_VERSION = 2;
 export const APP_ID = 'REP.exe';
@@ -149,18 +149,27 @@ export function setIsLoggable(ex, set) {
 /* ---------- Mutations (return { ok, message?, unticked? }) ---------- */
 
 /** field: 'reps' | 'left' | 'right' | 'leftSec' | 'rightSec' | 'kg'. Changing reps on a ticked set unticks it so totals stay honest. */
+/**
+ * Marks a session as edited now. Sync uses this to decide which device's copy of a day is newest.
+ * Always moves forward from the version being edited, so a device whose clock runs slow still wins with a fresh edit.
+ */
+function touch(session) { session.updatedAt = Math.max(Date.now(), (session.updatedAt ?? 0) + 1); }
+
 export function updateField(data, iso, exIdx, setIdx, field, raw) {
-  const ex = ensureSession(data, iso).exercises[exIdx];
+  const session = ensureSession(data, iso);
+  const ex = session.exercises[exIdx];
   const set = ex.sets[setIdx];
   if (field === 'kg') {
     const v = parseKg(raw);
     if (Number.isNaN(v)) return { ok: false, message: 'Weight must be 0 or more.' };
+    if (set.kg !== v) touch(session);
     set.kg = v;
     return { ok: true };
   }
   const v = parseReps(raw);
   const stored = Number.isNaN(v) ? null : v;
   const changed = set[field] !== stored;
+  if (changed) touch(session);
   set[field] = stored;
   if (set.done && changed) {
     set.done = false;
@@ -181,28 +190,63 @@ export function setDone(data, iso, exIdx, setIdx, done, today) {
     const msg = ex.measure === 'seconds' ? 'Enter seconds for both sides first.' : ex.perSide ? 'Enter reps for both sides first.' : 'Enter your reps first.';
     return { ok: false, message: msg };
   }
+  if (set.done !== !!done) touch(session);
   set.done = !!done;
   return { ok: true };
 }
 
 export function setExtraSet(data, iso, exIdx, on) {
-  const ex = ensureSession(data, iso).exercises[exIdx];
+  const session = ensureSession(data, iso);
+  const ex = session.exercises[exIdx];
   if (!ex.optionalExtraSet) return { ok: false };
   if (!on && ex.sets[ex.targetSets]?.done) {
     return { ok: false, message: 'Untick the second set before removing it.' };
   }
   ex.extraSetAdded = !!on;
+  touch(session);
   return { ok: true };
 }
 
 export function setSkipped(data, iso, exIdx, on) {
-  const ex = ensureSession(data, iso).exercises[exIdx];
+  const session = ensureSession(data, iso);
+  const ex = session.exercises[exIdx];
   if (!ex.skippable) return { ok: false };
   if (on && ex.sets.slice(0, activeSetCount(ex)).some((s) => s.done)) {
     return { ok: false, message: 'Untick the logged sets before skipping this exercise.' };
   }
   ex.skipped = !!on;
+  touch(session);
   return { ok: true };
+}
+
+/* ---------- Sync merge ---------- */
+
+const doneSets = (session) => session.exercises.reduce((n, ex) => n + ex.sets.filter((x) => x.done).length, 0);
+
+/**
+ * Combines this device's sessions with the synced copy, one day at a time.
+ * The most recently edited copy of a day wins. Days saved before sync existed have no edit time:
+ * then the copy with more ticked sets wins, and on a full tie the synced copy wins so devices agree.
+ * Returns { sessions, localChanged, remoteChanged }.
+ */
+export function mergeSessions(local, remote) {
+  const sessions = {};
+  let localChanged = false, remoteChanged = false;
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  for (const iso of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+    const l = local[iso], r = remote[iso];
+    let pick;
+    if (!r) pick = l;
+    else if (!l) pick = r;
+    else {
+      const lt = l.updatedAt ?? 0, rt = r.updatedAt ?? 0;
+      pick = lt > rt || (lt === rt && doneSets(l) > doneSets(r)) ? l : r;
+    }
+    sessions[iso] = pick;
+    if (!l || !same(pick, l)) localChanged = true;
+    if (!r || !same(pick, r)) remoteChanged = true;
+  }
+  return { sessions, localChanged, remoteChanged };
 }
 
 /* ---------- Progress ranges ---------- */
@@ -277,6 +321,7 @@ export function parseImport(text) {
 function validateSession(iso, s) {
   if (!isValidISO(iso) || !isWorkoutDay(iso)) return 'not a Monday–Saturday date.';
   if (!s || s.date !== iso || !Array.isArray(s.exercises)) return 'session is malformed.';
+  if (s.updatedAt !== undefined && !(Number.isFinite(s.updatedAt) && s.updatedAt >= 0)) return 'session is malformed.';
   const posIntOrNull = (v) => v === null || (Number.isInteger(v) && v >= 1);
   for (const ex of s.exercises) {
     if (typeof ex.exerciseId !== 'string' || !Number.isInteger(ex.targetSets) || ex.targetSets < 1) return 'exercise is malformed.';
@@ -294,9 +339,12 @@ function validateSession(iso, s) {
   return null;
 }
 
-export function applyImport(data, sessions, mode) {
-  if (mode === 'replace') data.sessions = structuredClone(sessions);
-  else data.sessions = { ...data.sessions, ...structuredClone(sessions) };
+/** Imported days count as edited now, so sync carries them to other devices. */
+export function applyImport(data, sessions, mode, now = Date.now()) {
+  const incoming = structuredClone(sessions);
+  for (const s of Object.values(incoming)) s.updatedAt = now;
+  if (mode === 'replace') data.sessions = incoming;
+  else data.sessions = { ...data.sessions, ...incoming };
   return data;
 }
 

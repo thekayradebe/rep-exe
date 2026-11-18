@@ -1,6 +1,7 @@
 // REP.exe — UI. All records live in localStorage on this device; see model.js for the rules.
-import * as M from './model.js?v=4';
-import { PLAN, EXERCISES } from './plan.js?v=4';
+import * as M from './model.js?v=6';
+import { PLAN, EXERCISES } from './plan.js?v=6';
+import * as Sync from './sync.js?v=6';
 
 const STORAGE_KEY = 'repexe:data:v1';
 const $content = document.getElementById('content');
@@ -29,10 +30,11 @@ function load() {
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 }
 
-function save() {
+function save({ push = true } = {}) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     setStatus(true);
+    if (push) schedulePush();
     return true;
   } catch {
     setStatus(false);
@@ -41,9 +43,105 @@ function save() {
   }
 }
 
-function setStatus(ok) {
-  $status.dataset.state = ok ? 'saved' : 'error';
-  $status.textContent = ok ? '♥ saved' : '⚠ not saving';
+let storageOk = true;
+function setStatus(ok = storageOk) {
+  storageOk = ok;
+  if (!ok) { $status.dataset.state = 'error'; $status.textContent = '⚠ not saving'; return; }
+  const label = { syncing: '↻ syncing', synced: '♥ synced', offline: '♥ saved · offline', error: '♥ saved · sync paused' }[sy.state];
+  $status.dataset.state = 'saved';
+  $status.textContent = label || '♥ saved';
+}
+
+/* ---------- Sync (secret GitHub gist) ---------- */
+// The key and gist id stay on this device. Each device merges its log with the gist, newest edit per day wins.
+
+const SYNC_KEY = 'repexe:sync:v1';
+const sy = { state: 'off', error: '', running: false, again: false, overwrite: false, timer: null, setup: false, busy: false };
+let sync = readSyncCfg(); // { token, gistId, lastSync } or null
+if (sync) sy.state = 'syncing';
+
+function readSyncCfg() {
+  try { const c = JSON.parse(localStorage.getItem(SYNC_KEY)); return c?.token && c?.gistId ? c : null; } catch { return null; }
+}
+function writeSyncCfg() {
+  try { if (sync) localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); else localStorage.removeItem(SYNC_KEY); } catch { /* ignore */ }
+}
+function setSync(state, error = '') {
+  sy.state = state; sy.error = error;
+  setStatus();
+  if (s.view === 'progress' && !document.activeElement?.matches?.('input')) render();
+}
+function schedulePush() {
+  if (!sync) return;
+  clearTimeout(sy.timer);
+  sy.timer = setTimeout(() => syncNow(), 1500);
+}
+
+/** Pull the gist, merge it with this device, and push back if anything differs. overwrite: push this device's log as-is. */
+async function syncNow({ overwrite = false } = {}) {
+  if (!sync) return;
+  if (sy.running) { sy.again = true; sy.overwrite ||= overwrite; return; }
+  sy.running = true;
+  clearTimeout(sy.timer);
+  setSync('syncing');
+  try {
+    let needWrite = true;
+    if (!overwrite) {
+      const text = await Sync.read(sync.token, sync.gistId);
+      if (text !== null) {
+        const remote = M.parseImport(text);
+        if (!remote.ok) throw new Sync.SyncError('http', `The synced log couldn’t be read: ${remote.error}`);
+        const m = M.mergeSessions(data.sessions, remote.sessions);
+        needWrite = m.remoteChanged;
+        if (m.localChanged) {
+          data.sessions = m.sessions;
+          if (M.dropStaleBlankSessions(data, today)) needWrite = true;
+          save({ push: false });
+          if (!document.activeElement?.matches?.('input')) render();
+        }
+      }
+    }
+    if (needWrite) await Sync.write(sync.token, sync.gistId, M.exportData(data));
+    sync.lastSync = Date.now();
+    writeSyncCfg();
+    setSync('synced');
+  } catch (e) {
+    if (e.code === 'missing') {
+      // The gist was deleted on GitHub: make a fresh one from this device's log.
+      try { sync.gistId = (await Sync.connect(sync.token, M.exportData(data))).gistId; writeSyncCfg(); sy.again = true; }
+      catch (e2) { setSync(e2.code === 'offline' ? 'offline' : 'error', e2.message); }
+    } else {
+      setSync(e.code === 'offline' ? 'offline' : 'error', e.message || 'Sync failed.');
+    }
+  } finally {
+    sy.running = false;
+    if (sy.again) { const ow = sy.overwrite; sy.again = false; sy.overwrite = false; syncNow({ overwrite: ow }); }
+  }
+}
+
+async function connectSync(token) {
+  token = (token || '').trim();
+  if (!token) { toast('Paste your GitHub key first.'); return; }
+  sy.busy = true; render();
+  try {
+    const r = await Sync.connect(token, M.exportData(data));
+    sync = { token, gistId: r.gistId, lastSync: null };
+    writeSyncCfg();
+    sy.setup = false;
+    toast(r.created ? 'Sync on ✓ Your log is saved to GitHub.' : 'Sync on ✓ Merging your log from GitHub…');
+    await syncNow();
+  } catch (e) {
+    toast(e.message || 'Couldn’t connect.', true);
+  } finally {
+    sy.busy = false; render();
+  }
+}
+
+function disconnectSync() {
+  sync = null; writeSyncCfg();
+  clearTimeout(sy.timer);
+  setSync('off');
+  toast('Sync off on this device. Your gist on GitHub is untouched.');
 }
 
 let toastTimer;
@@ -319,11 +417,44 @@ function renderBackup() {
       <div class="pills"><button type="button" class="pill" id="imp-merge" data-import="merge">Merge</button><button type="button" class="pill" data-import="replace">Replace</button><button type="button" class="pill" data-import="cancel">Cancel</button></div>
     </div>`;
   }
-  return `<div class="backup">
-    <span>Saved on this phone only</span>
+  return `${renderSync()}<div class="backup">
+    <span>Backup file</span>
     <span class="links"><button type="button" class="link" data-export>Export</button> · <label class="link" for="import-file">Import</label></span>
     <input type="file" id="import-file" accept="application/json,.json" class="sr-only">
   </div>${confirm}`;
+}
+
+function renderSync() {
+  if (sync) {
+    const when = sync.lastSync ? new Date(sync.lastSync).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+    const line = {
+      syncing: 'Syncing with GitHub…',
+      synced: `Synced with GitHub${when ? ` · ${when}` : ''}`,
+      offline: 'Offline · will sync when you’re back online',
+      error: esc(sy.error || 'Sync paused.'),
+    }[sy.state] || 'Sync on';
+    return `<div class="sync${sy.state === 'error' ? ' is-error' : ''}" role="status">
+      <span>${line}</span>
+      <span class="links"><button type="button" class="link" data-syncnow>Sync now</button> · <button type="button" class="link" data-syncoff>Turn off</button></span>
+    </div>`;
+  }
+  if (!sy.setup) {
+    return `<div class="sync"><span>Saved on this device only</span>
+      <span class="links"><button type="button" class="link" data-syncsetup>Sync with GitHub</button></span></div>`;
+  }
+  return `<div class="sync-setup">
+    <p>Sync keeps every device on the same log. It's saved in a secret gist in your GitHub account.</p>
+    <ol>
+      <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=REP.exe%20sync" target="_blank" rel="noopener noreferrer">Make a GitHub key</a> with only <strong>gist</strong> ticked.</li>
+      <li>Paste it below. It stays on this device.</li>
+    </ol>
+    <label class="sr-only" for="sync-token">GitHub key</label>
+    <input type="password" id="sync-token" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ghp_…" ${sy.busy ? 'disabled' : ''}>
+    <div class="pills">
+      <button type="button" class="pill" data-syncconnect ${sy.busy ? 'disabled' : ''}>${sy.busy ? 'Connecting…' : 'Connect'}</button>
+      <button type="button" class="pill" data-syncsetup ${sy.busy ? 'disabled' : ''}>Cancel</button>
+    </div>
+  </div>`;
 }
 
 /* ---------- Events ---------- */
@@ -370,11 +501,21 @@ document.addEventListener('click', (e) => {
     s.logWeek = M.addDays(s.logWeek, 7 * Number(d.logweek)); s.logOpen = null;
   } else if (d.logopen) {
     s.logOpen = s.logOpen === d.logopen ? null : d.logopen;
+  } else if ('syncsetup' in d) {
+    sy.setup = !sy.setup;
+    if (sy.setup) { render(); document.getElementById('sync-token')?.focus(); return; }
+  } else if ('syncconnect' in d) {
+    connectSync(document.getElementById('sync-token')?.value); return;
+  } else if ('syncnow' in d) {
+    syncNow(); return;
+  } else if ('syncoff' in d) {
+    disconnectSync(); return;
   } else if ('export' in d) {
     exportBackup(); return;
   } else if (d.import) {
-    if (d.import !== 'cancel' && s.importing && (M.applyImport(data, s.importing.sessions, d.import), save())) {
+    if (d.import !== 'cancel' && s.importing && (M.applyImport(data, s.importing.sessions, d.import), save({ push: false }))) {
       toast(`Backup ${d.import === 'merge' ? 'merged' : 'restored'} ✓`);
+      syncNow({ overwrite: d.import === 'replace' }); // replace: this log becomes the synced log
     }
     s.importing = null;
   } else return;
@@ -445,6 +586,7 @@ function readImport(file) {
 // Coming back to the app on a new day: move "today" forward.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  syncNow();
   const now = M.todayISO();
   if (now === today) return;
   const wasOnToday = s.date === today || s.rest;
@@ -465,6 +607,8 @@ window.addEventListener('storage', (e) => {
 load();
 goToday();
 render();
+syncNow();
+window.addEventListener('online', () => syncNow());
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});

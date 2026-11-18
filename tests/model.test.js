@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as M from '../js/model.js?v=4';
-import { PLAN, EXERCISES, PLAN_VERSION } from '../js/plan.js?v=4';
+import * as M from '../js/model.js?v=6';
+import { PLAN, EXERCISES, PLAN_VERSION } from '../js/plan.js?v=6';
 
 const MON = '2026-11-16', TUE = '2026-11-17', WED = '2026-11-18', THU = '2026-11-19', FRI = '2026-11-20', SAT = '2026-11-21', SUN = '2026-11-22';
 
@@ -197,8 +197,10 @@ test('export → import round trip preserves everything', () => {
   const parsed = M.parseImport(text);
   assert.equal(parsed.ok, true);
   assert.equal(parsed.count, 2);
-  const fresh = M.applyImport(M.emptyData(), parsed.sessions, 'replace');
-  assert.deepEqual(fresh.sessions, data.sessions);
+  const fresh = M.applyImport(M.emptyData(), parsed.sessions, 'replace', 123);
+  const strip = (ss) => Object.fromEntries(Object.entries(ss).map(([k, v]) => [k, { ...v, updatedAt: undefined }]));
+  assert.deepEqual(strip(fresh.sessions), strip(data.sessions));
+  assert.ok(Object.values(fresh.sessions).every((x) => x.updatedAt === 123), 'imported days count as edited now');
 });
 
 test('import validation rejects bad files; merge keeps other dates', () => {
@@ -328,4 +330,57 @@ test('today: blank old-plan session is refreshed; one with entries is kept as lo
   started.sessions[WED].exercises[0].sets[0].left = 8; // typed a value, not ticked yet
   assert.equal(M.dropStaleBlankSessions(started, WED), 0);
   assert.equal(started.sessions[WED].exercises[0].sets[0].left, 8);
+});
+
+/* ---------- Sync merge ---------- */
+
+test('edits stamp the day with an edit time', () => {
+  const data = M.emptyData();
+  M.updateField(data, MON, 0, 0, 'reps', '10');
+  assert.ok(Number.isFinite(data.sessions[MON].updatedAt));
+});
+
+test('merge: newest copy of each day wins; days from both sides are kept', () => {
+  const a = M.emptyData(), b = M.emptyData();
+  logSet(a, MON, 0, 0, 10); a.sessions[MON].updatedAt = 100;   // phone: Monday
+  logSet(b, MON, 0, 0, 12); b.sessions[MON].updatedAt = 200;   // laptop: newer Monday
+  logSet(b, TUE, 0, 0, 8);                                     // laptop only: Tuesday
+  logSet(a, WED, 0, 0, 11, WED);                               // phone only: Wednesday
+  const m = M.mergeSessions(a.sessions, b.sessions);
+  assert.deepEqual(Object.keys(m.sessions).sort(), [MON, TUE, WED]);
+  assert.equal(m.sessions[MON].exercises[0].sets[0].reps, 12);
+  assert.deepEqual([m.localChanged, m.remoteChanged], [true, true]);
+});
+
+test('merge: identical data changes nothing; old undated days prefer more ticked sets', () => {
+  const a = M.emptyData();
+  logSet(a, MON, 0, 0, 10);
+  const same = M.mergeSessions(a.sessions, structuredClone(a.sessions));
+  assert.deepEqual([same.localChanged, same.remoteChanged], [false, false]);
+
+  const old = M.emptyData(), blank = M.emptyData();
+  logSet(old, MON, 0, 0, 10); logSet(old, MON, 0, 1, 10); delete old.sessions[MON].updatedAt;
+  M.updateField(blank, MON, 0, 0, 'reps', '9'); delete blank.sessions[MON].updatedAt;
+  const m = M.mergeSessions(blank.sessions, old.sessions);
+  assert.equal(M.sessionStats(m.sessions[MON]).done, 2);
+  assert.deepEqual([m.localChanged, m.remoteChanged], [true, false]);
+});
+
+test('merge: a backup with edit times still validates', () => {
+  const a = M.emptyData();
+  logSet(a, MON, 0, 0, 10);
+  assert.equal(M.parseImport(M.exportData(a)).ok, true);
+  a.sessions[MON].updatedAt = 'yesterday';
+  assert.equal(M.parseImport(M.exportData(a)).ok, false);
+});
+
+test('merge: a fresh edit beats the copy it was made from, even if that copy has a later clock', () => {
+  const a = M.emptyData();
+  logSet(a, MON, 0, 0, 10);
+  a.sessions[MON].updatedAt = Date.now() + 60000; // other device's clock is a minute fast
+  const synced = structuredClone(a.sessions);
+  M.updateField(a, MON, 0, 1, 'reps', '11');      // edit here, on top of that copy
+  const m = M.mergeSessions(a.sessions, synced);
+  assert.equal(m.sessions[MON].exercises[0].sets[1].reps, 11);
+  assert.deepEqual([m.localChanged, m.remoteChanged], [false, true]);
 });
